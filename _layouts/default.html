@@ -4,6 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% if page.title %}{{ page.title }} | {% endif %}{{ site.title }}</title>
+  <link rel="icon" type="image/png" sizes="96x96" href="{{ '/assets/favicon-96.png' | relative_url }}">
+  <link rel="icon" type="image/png" sizes="48x48" href="{{ '/assets/favicon-48.png' | relative_url }}">
+  <link rel="icon" type="image/png" sizes="32x32" href="{{ '/assets/favicon-32.png' | relative_url }}">
+  <link rel="icon" type="image/png" sizes="192x192" href="{{ '/assets/favicon-192.png' | relative_url }}">
+  <link rel="apple-touch-icon" href="{{ '/assets/apple-touch-icon.png' | relative_url }}">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -25,7 +30,8 @@
     }
 
     header a { color: #e0e0e0; text-decoration: none; }
-    header .site-title { font-size: 1.4rem; font-weight: 700; letter-spacing: -0.02em; }
+    header .site-title { font-size: 1.4rem; font-weight: 700; letter-spacing: -0.02em; display: flex; align-items: center; gap: 0.5rem; }
+    header .site-logo { height: 28px; width: 28px; }
     header .site-title:hover { color: #fff; }
     header nav a { margin-left: 1.5rem; font-size: 0.95rem; }
     header nav a:hover { color: #fff; }
@@ -270,7 +276,7 @@
 </head>
 <body>
   <header>
-    <a href="{{ '/' | relative_url }}" class="site-title">{{ site.title }}</a>
+    <a href="{{ '/' | relative_url }}" class="site-title"><img src="{{ '/assets/logo.png' | relative_url }}" alt="" class="site-logo">{{ site.title }}</a>
     <nav>
       <a href="{{ '/' | relative_url }}">Posts</a>
       <a href="https://github.com/xorbh/agentic-programming">GitHub</a>
