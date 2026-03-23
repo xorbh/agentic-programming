@@ -6,134 +6,153 @@ tags: [ai-agents, security, linux, devops, claude-code]
 ---
 
 <div class="tldr">
-<strong>TL;DR:</strong> When deploying an autonomous AI agent on a production server, don't try to filter commands in application code. Instead, run the agent as a restricted Linux user with surgical sudo rules, a read-only database role, and hardened file permissions. The OS is your security boundary, not your code.
+<strong>TL;DR:</strong> We deployed an autonomous AI agent on a production server and needed to give it real debugging power without the ability to break things. The answer wasn't a new framework or an AI-specific sandbox. It was Unix users, sudo rules, and file permissions. Primitives from the 1970s, still the best tool for the job.
 </div>
 
-## The Setup
+## What Happened
 
-We run a manufacturing automation server with Telegram bots, NocoDB, n8n, PostgreSQL, and Redis. When something breaks at 2am, someone has to SSH in, check container logs, query the database, and trace the failure chain.
+Our manufacturing server went down on a Sunday morning. NocoDB's audit log table had silently grown to 32GB, filled the `/var` partition to 100%, and triggered a cascade: Redis couldn't persist to disk, NocoDB started returning 502s, and all four Telegram bots lost authentication. Postgres entered a crash-recovery loop because it couldn't write WAL files.
 
-We wanted an AI agent that could do this. Talk to it in a Telegram group, and it investigates. "Why are the bots returning auth errors?" It checks NocoDB, finds Redis is in a restart loop, traces it to a corrupted AOF file from a disk-full incident. Real diagnosis, not canned checks.
+We fixed it. Truncated the audit table, freed 32GB, restarted the stack. But it took 45 minutes of SSH, reading logs across six containers, and mentally reconstructing the failure chain. The kind of work that shouldn't require a human at a keyboard.
 
-The tool: Claude Code SDK. It gives the agent a bash shell and lets Claude decide what commands to run. The same way a human would debug. `docker ps`, `docker logs`, `psql` queries, `df -h`. The agent is autonomous. You ask a question, it runs commands, reads the output, runs more commands, and comes back with an answer.
+So we built an agent. A [Claude Code SDK](https://docs.anthropic.com/en/docs/claude-code/sdk) bot sitting in a Telegram group. Ask it "why are the bots returning auth errors?" and it actually investigates. Runs `docker logs`, checks Redis, queries Postgres, traces the cascade, and tells you the answer. The same debugging chain we followed manually, done in 20 seconds.
 
-The problem: a full bash shell on a production server. What could go wrong?
+The SDK gives Claude a bash shell. It decides what commands to run. That's what makes it powerful. It's also what makes it dangerous on a production server.
 
-## Why Application-Level Filtering Doesn't Work
+## Our First Attempt: Filtering Commands
 
-The obvious approach is to intercept commands before execution. Maintain a blocklist. Check for `rm`, `docker stop`, `kill`, `DROP TABLE`.
+We started with the obvious approach. The Claude Code SDK has a `can_use_tool` callback that lets you inspect commands before execution. We built a blocklist:
 
-This fails for a few reasons.
+```python
+DENIED_PATTERNS = [
+    "rm ", "docker stop", "docker restart", "docker kill",
+    "kill ", "shutdown", "reboot",
+    "INSERT", "UPDATE", "DELETE", "DROP", "TRUNCATE",
+]
+```
 
-First, there are too many ways to express the same command. `rm file`, `python3 -c "import os; os.remove('file')"`, `perl -e 'unlink("file")'`, `find . -delete`. You can't enumerate every possible bypass.
+It took about five minutes to realize the problems.
 
-Second, the AI is specifically trained to be creative with shell commands. Pipe through `sh`, encode in base64, use `eval`. It's not adversarial. It's just good at bash. The same capability that makes it useful for debugging makes it dangerous if the only barrier is pattern matching.
+The agent could write a Python script to `/tmp` and execute it. The script would run the same blocked commands. Or it could use `curl` against the Docker socket. Or pipe through `sh`. Or use `eval`. The AI is trained to be creative with shell commands. That's the whole point. You can't out-enumerate an LLM's knowledge of bash.
 
-Third, the Claude Code SDK spawns bash subprocesses. You don't control the shell invocation. The SDK gives Claude a bash tool, and Claude uses it however it sees fit.
+We also hit a practical issue: the SDK's `can_use_tool` callback required streaming mode, which changed the API contract. The approach was fighting the tool instead of working with it.
 
-## The Right Layer: The Operating System
+## The Realization
 
-Linux has been solving this exact problem for decades. Untrusted process needs scoped access to a shared system. The answer is users, groups, and permissions.
+We were trying to solve a privilege problem in application code. Linux solved this decades ago. The question "how do I let an untrusted process read system state without being able to modify it?" is as old as multi-user Unix.
 
-The principle: **let the agent run anything it wants, but limit what the user account can do.** The security boundary is the kernel, not your code.
+The answer is the same as it's always been: users, groups, permissions.
 
-### Layer 1: A User With Nothing
+## How We Set It Up
 
-Create a `monitor` user that starts with no special access:
+Here's exactly what we did. If you're deploying something similar, this is a step-by-step guide.
+
+### Step 1: Create a User With Nothing
 
 ```bash
 useradd -m -s /bin/bash monitor
 ```
 
-Critically, this user is **not** in the `docker` group. On Linux, the Docker socket (`/var/run/docker.sock`) is owned by `root:docker`. If you're not in the group, you can't talk to Docker at all. Not through the CLI, not through curl, not through Python.
+The key decision: do **not** add this user to the `docker` group. On Linux, the Docker socket is owned by `root:docker`:
 
 ```
 srw-rw---- 1 root docker 0 Mar 2 12:45 /var/run/docker.sock
 ```
 
-The agent runs as `monitor`. It literally cannot access Docker. Which means it can't do anything useful yet.
+If you're not in the group, you can't access it. Not through the CLI, not through `curl --unix-socket`, not through Python's `socket` module. The kernel enforces this. There's no workaround short of a privilege escalation exploit.
 
-### Layer 2: Surgical sudo
+At this point the agent can run `df` and `free` and not much else.
 
-Here's where it gets interesting. We give the user sudo access to exactly the commands it needs, with no password:
+### Step 2: Grant Read-Only Docker Access via sudo
+
+We wrote a sudoers file at `/etc/sudoers.d/monitor`:
 
 ```
 Defaults:monitor !targetpw, !requiretty
 
+# Read-only Docker commands
 monitor ALL=(root) NOPASSWD: /usr/bin/docker ps *
+monitor ALL=(root) NOPASSWD: /usr/bin/docker ps
 monitor ALL=(root) NOPASSWD: /usr/bin/docker logs *
 monitor ALL=(root) NOPASSWD: /usr/bin/docker inspect *
 monitor ALL=(root) NOPASSWD: /usr/bin/docker stats *
+monitor ALL=(root) NOPASSWD: /usr/bin/docker stats
 monitor ALL=(root) NOPASSWD: /usr/bin/docker info
 monitor ALL=(root) NOPASSWD: /usr/bin/docker system df *
+monitor ALL=(root) NOPASSWD: /usr/bin/docker system df
 
+# Database access: only psql, only as monitor_readonly
 monitor ALL=(root) NOPASSWD: /usr/bin/docker exec aapl-postgres psql -U monitor_readonly *
 
+# System logs
 monitor ALL=(root) NOPASSWD: /usr/bin/journalctl *
 ```
 
-`sudo docker ps` works. `sudo docker stop` asks for a password the agent doesn't have.
+The agent runs `sudo docker ps` and it works. It runs `sudo docker stop redis` and gets "a password is required." The sudo argument matching is exact. The `docker exec` rule only permits `psql` with the `monitor_readonly` user on a specific container. No shell access. No privileged database user.
 
-The `docker exec` rule is the most interesting. It allows `docker exec aapl-postgres psql -U monitor_readonly ...` and nothing else. The agent can query the database, but only as the read-only user. It can't exec into a bash shell. It can't use a privileged database user. The sudo argument matching is exact.
+The `!targetpw` override was important on our SLES server. The default sudoers had `Defaults targetpw` which requires the target user's password for any sudo. Without the override, even our whitelisted commands would ask for root's password. `!requiretty` lets the agent run sudo from a non-interactive process.
 
-### Layer 3: Read-Only Database Role
-
-Even if the agent can run SELECT queries, PostgreSQL provides its own enforcement:
+### Step 3: Create a Read-Only Database Role
 
 ```sql
 CREATE USER monitor_readonly WITH PASSWORD '...';
 GRANT CONNECT ON DATABASE nocodb, n8n, aapl_db TO monitor_readonly;
+
+-- For each database and schema:
 GRANT USAGE ON SCHEMA public TO monitor_readonly;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO monitor_readonly;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO monitor_readonly;
 ```
 
-The agent can explore the entire database. It can check table sizes, query failed workflow executions, examine NocoDB metadata. But `INSERT`, `UPDATE`, `DELETE`, `DROP` all fail at the database level. Two independent enforcement points for the same restriction.
+This is defense in depth. The sudoers rules already restrict which database user the agent can connect as. But even if that somehow got bypassed, PostgreSQL itself would reject any write operation. Two independent layers enforcing the same constraint.
 
-### Layer 4: File Permissions
-
-Sensitive files get locked to their owning user:
+### Step 4: Lock Down Sensitive Files
 
 ```bash
 chmod 600 /home/aapl/automation/.env
 chmod 600 /home/aapl/automation/secrets/postgres_password.txt
+chmod 600 /home/aapl/telegram_bots/.env
 ```
 
-The agent can read docker-compose files (useful for debugging). It can't read API keys, database passwords, or bot tokens.
+The agent can read `docker-compose.yml` files. Those are useful for understanding how services connect. It can't read `.env` files with API keys, bot tokens, or database passwords.
 
-The agent's home directory is read-only (owned by root). It can write to `/tmp` because the Claude Code SDK needs it for temp files, but `/tmp` is on tmpfs (RAM-backed), so it can't fill the main disk.
+We also made the agent's home directory read-only:
 
-## Testing It
-
-We tested every bypass we could think of:
-
-```
-sudo docker stop redis           → "a password is required"
-sudo docker exec postgres bash   → "a password is required"
-sudo docker exec postgres psql -U aapl_user  → "a password is required"
-cat /home/aapl/automation/.env   → "Permission denied"
-docker ps (without sudo)         → "permission denied" (not in docker group)
-curl --unix-socket /var/run/docker.sock ...  → "Permission denied"
+```bash
+chown -R root:root /home/monitor
+chmod 555 /home/monitor
 ```
 
-The Python bypass? Write a script to `/tmp`, run it. It still runs as `monitor`. Same permissions apply. `subprocess.run(["sudo", "docker", "stop", "redis"])` still asks for a password. The Docker socket is still inaccessible.
+The agent can write to `/tmp` (the Claude Code SDK needs it for session files), but `/tmp` is on tmpfs. It can't fill the main disk.
 
-## What the Agent Actually Does
+## Testing the Boundaries
 
-With this setup, the agent is genuinely useful for debugging. Here's a real interaction:
+We ran every bypass we could think of as the `monitor` user:
+
+| What we tried | What happened |
+|---|---|
+| `sudo docker stop redis` | "a password is required" |
+| `sudo docker restart redis` | "a password is required" |
+| `sudo docker exec postgres bash` | "a password is required" |
+| `sudo docker exec postgres psql -U aapl_user` | "a password is required" |
+| `docker ps` (no sudo) | "permission denied" (not in docker group) |
+| `curl --unix-socket /var/run/docker.sock` | "Permission denied" |
+| `cat /home/aapl/automation/.env` | "Permission denied" |
+| Write a Python script, run it | Runs as `monitor`. Same restrictions apply. |
+
+The Python bypass question was the most interesting one to think through. Yes, the agent can write a Python script to `/tmp` and execute it. The script runs as the `monitor` user. `subprocess.run(["sudo", "docker", "stop", "redis"])` still gets blocked by sudoers. The Docker socket is still inaccessible. File permissions still apply. The script has the same walls around it that bash does, because the walls are at the OS level, not the language level.
+
+## What the Agent Can Actually Do
+
+After all this restriction, the agent is still genuinely useful. Here's a real interaction from the day we deployed it:
 
 > **User:** @agent why are the bots returning auth errors?
 >
-> **Agent:** *runs `sudo docker logs --tail 50 aapl-production-bot`*
-> *sees "Failed to fetch auth data from NocoDB" and 502 errors*
-> *runs `sudo docker logs --tail 20 aapl-nocodb-new`*
-> *sees "MISCONF Redis is configured to save RDB snapshots, but can't persist to disk"*
-> *runs `sudo docker logs --tail 20 aapl-redis`*
-> *sees "No space left on device"*
-> *runs `df -h /var`*
+> The agent runs `sudo docker logs --tail 50 aapl-production-bot`. Sees "Failed to fetch auth data from NocoDB" with 502 errors. Runs `sudo docker logs --tail 20 aapl-nocodb-new`. Sees Redis connection errors. Runs `sudo docker logs --tail 20 aapl-redis`. Sees "No space left on device." Runs `df -h /var`.
 >
-> "/var is 100% full. Redis can't save snapshots, which causes NocoDB to fail, which breaks bot authentication. The cascade is: disk full -> Redis fails -> NocoDB returns 502 -> bot auth lookup fails -> all users blocked."
+> **Agent:** "/var is 100% full. Redis can't save snapshots, which causes NocoDB to fail, which breaks bot authentication. The cascade is: disk full, Redis fails, NocoDB returns 502, bot auth lookup fails, all users blocked."
 
-That's the exact debugging chain a human would follow, done in 20 seconds.
+That's the exact debugging chain we followed manually during the Sunday incident. The agent traced it in 20 seconds across four containers.
 
 ## The Architecture
 
@@ -145,32 +164,33 @@ Bot Process (systemd, User=monitor)
        |
        +-- Claude Code SDK --> spawns bash as 'monitor'
                |
-               |-- sudo docker ps/logs/inspect    (allowed by sudoers)
-               |-- sudo docker stop/restart        (blocked, needs password)
+               |-- sudo docker ps/logs/inspect    (allowed)
+               |-- sudo docker stop/restart        (blocked)
                |-- sudo docker exec psql -U monitor_readonly  (allowed)
-               |-- sudo docker exec bash           (blocked, needs password)
+               |-- sudo docker exec bash           (blocked)
                |-- df, free, uptime, ps            (allowed, no sudo needed)
                |-- cat .env                        (blocked, file permissions)
                +-- docker ps (no sudo)             (blocked, not in docker group)
 ```
 
-## When This Approach Applies
+The systemd unit runs the process as the `monitor` user. The Claude Code SDK spawns bash subprocesses that inherit the same user. Every command the agent runs, regardless of how creatively it constructs it, hits the same OS-level restrictions.
 
-This works when:
-- The agent needs host-level access (not just API calls)
-- You want to give it real investigative capability, not just canned health checks
-- The server runs multiple services that interact in complex ways
-- You need the AI to trace failures across service boundaries
+## What We'd Do Differently
 
-It doesn't apply when:
-- The agent only needs API access (use API keys with scoped permissions instead)
-- You can run the agent in a container (use a Docker socket proxy)
-- The agent needs write access (this model is fundamentally read-only)
+If the agent needed to run inside a Docker container instead of directly on the host, we'd use a [Docker socket proxy](https://github.com/Tecnativa/docker-socket-proxy) instead of sudoers. Same principle, different mechanism. The proxy filters Docker API calls at the HTTP level, allowing GET requests (read) and blocking POST/DELETE (write).
 
-## The Broader Principle
+We chose the host approach because the agent needs to read real disk usage, check system memory, and access `journalctl`. A container sees its own isolated view of most of these. You can work around it with volume mounts, but at that point you're fighting containers instead of using them.
 
-The lesson isn't specific to AI agents. It's the same principle behind any privilege separation: **enforce at the lowest possible layer.**
+## The Broader Point
 
-Application-level checks are suggestions. OS-level permissions are facts. Database roles are facts. File ownership is a fact. When the enforcement layer is the kernel, the only bypass is a kernel exploit.
+<p class="lead">None of this is new technology. Users, groups, permissions, sudo rules, database roles. These primitives are from the 1970s.</p>
 
-AI agents make this more important, not less. They're creative, autonomous, and will find paths you didn't anticipate. The path shouldn't matter if the destination is locked.
+That's the point. When everyone is reaching for new AI-specific sandboxing frameworks, the boring Unix security model is sitting right there, battle-tested for fifty years, enforced by the kernel, and understood by every sysadmin who's ever locked down a shared server.
+
+The instinct with AI agents is to solve security problems in AI-specific ways: prompt engineering ("please don't delete anything"), application-level command filtering, custom sandboxing layers. These all operate at the wrong level. The agent can reason around prompts. It can find creative bypasses for filters. But it can't reason its way past `chmod 600` or a sudoers rule. The kernel doesn't care how clever you are.
+
+<div class="callout">
+<strong>The litmus test:</strong> If the agent found a creative new way to invoke a command, would your security still hold? If it depends on pattern matching, no. If it depends on the kernel, yes.
+</div>
+
+The recipe is simple. Start with a user that has nothing. Grant access upward, one command at a time, through sudo rules and database roles. Lock secrets with file permissions. Let the agent be as creative as it wants within those walls. The walls are made of the same material that's been keeping untrusted processes in check since the PDP-11.
