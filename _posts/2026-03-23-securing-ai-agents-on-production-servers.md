@@ -13,11 +13,13 @@ tags: [ai-agents, security, linux, devops, claude-code]
 
 A production server went down on a Sunday morning. A database table had silently grown to 32GB, filled the disk, and triggered a cascade across half a dozen Docker containers. Redis couldn't persist, the app layer started returning 502s, Postgres entered a crash-recovery loop.
 
-We fixed it. But it took 45 minutes of SSH, reading logs across six containers, and mentally reconstructing which failure caused which. The kind of work that shouldn't require a human at a keyboard.
+We fixed it by pointing Claude at the server over SSH and letting it run commands directly. It traced the cascade across six containers, found the root cause, and walked us through the fix. Effective. Also terrifying. The account it was using had full privileges on a production server running Docker, PostgreSQL, Redis, and a handful of application services.
 
-So we built an agent. A [Claude Code SDK](https://docs.anthropic.com/en/docs/claude-code/sdk) bot sitting in a Telegram group chat. Ask it "why is the app returning errors?" and it actually investigates. Runs `docker logs` across containers, queries the database, checks disk usage, traces the cascade, and tells you the root cause. The same debugging workflow a human would follow, done in 20 seconds.
+That experience was the motivation. We wanted to keep the power of an AI agent that can SSH in and actually debug things, but without the risk of it having the keys to everything.
 
-The SDK gives Claude a bash shell. It decides what commands to run. `docker ps`, `docker logs`, `psql` queries, `df -h`. That's what makes it powerful. It's also what makes it dangerous on a production server running Docker, PostgreSQL, Redis, and a handful of application services.
+So we built a proper setup. A [Claude Code SDK](https://docs.anthropic.com/en/docs/claude-code/sdk) bot sitting in a Telegram group chat. Ask it "why is the app returning errors?" and it actually investigates. Runs `docker logs` across containers, queries the database, checks disk usage, traces the cascade, and tells you the root cause. The same debugging workflow, done in 20 seconds, with guardrails this time.
+
+The SDK gives Claude a bash shell. It decides what commands to run. `docker ps`, `docker logs`, `psql` queries, `df -h`. That's what makes it powerful. The question was how to keep that power without giving it the ability to break things.
 
 ## Our First Attempt: Filtering Commands
 
@@ -39,9 +41,9 @@ We also hit a practical issue: the SDK's `can_use_tool` callback required stream
 
 ## The Realization
 
-We were trying to solve a privilege problem in application code. Linux solved this decades ago. The question "how do I let an untrusted process read system state without being able to modify it?" is as old as multi-user Unix.
-
-The answer is the same as it's always been: users, groups, permissions.
+<div class="callout">
+<strong>The key insight:</strong> We were trying to solve a privilege problem in application code. Linux solved this decades ago. The question "how do I let an untrusted process read system state without being able to modify it?" is as old as multi-user Unix. The answer is the same as it's always been: users, groups, permissions.
+</div>
 
 ## How We Set It Up
 

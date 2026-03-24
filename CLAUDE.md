@@ -74,6 +74,6 @@ The layout supports these HTML components for visual variety:
 
 - **Ruby:** 3.3.7 via rbenv (`.ruby-version` in project root)
 - **Jekyll:** via `github-pages` gem
-- **Local preview:** `bundle exec jekyll serve` → http://127.0.0.1:4000/agentic-programming/
+- **Local preview:** `make serve` → http://127.0.0.1:4973/agentic-programming/
 - **Deployment:** GitHub Actions on push to main, deploys to GitHub Pages
 - **Assets:** stored in `/assets/` (logo, favicons)
