@@ -1,0 +1,9 @@
+Every PowerPoint file and Word document you open in a browser gets converted to HTML and CSS before you see it. The proprietary format is a detour. Your ideas go in, get encoded as XML inside a ZIP archive, then get decoded back to HTML so you can read them. We're adding two translation steps to end up where we could have started.
+
+The office suites have a vested interest in propagating these formats because the formats are the lock-in. But strip away the proprietary packaging and look at what these tools actually produce. A document is Markdown. A presentation is a website. A spreadsheet is a database. Google Suite and Office 365 wrap these primitives in proprietary formats, host them behind a login wall, and charge a subscription for access to your own content. And now we're supposed to be excited that Gemini is integrated into Google Suite? Same enclosure, just with an AI concierge at the gate.
+
+The MCP response to this has been predictably backwards. Instead of questioning the format, developers are building connectors so AI agents can read and write .pptx files through 32-tool interfaces that position elements by absolute coordinates in EMUs. Painting over gravel. The agent already speaks HTML and Markdown fluently. We're building elaborate bridges back into the proprietary format so the content can be converted to HTML again on the other side.
+
+The alternative already exists. HTML, CSS, Markdown, git. Plain text, open standards, no login wall, no subscription, no platform deciding what you can export and when. Your content as files you own, versioned with tools that have worked for decades.
+
+Full post on what we'd keep, what we'd throw away, and why the format is the lock-in: https://xorbh.github.io/agentic-programming/2026/03/24/powerpoint-word-and-the-case-for-html-primitives/
