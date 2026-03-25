@@ -81,6 +81,22 @@ Developers describe workflows like: Helix on the left, lazygit on the top right,
 
 The appeal isn't retro aesthetics. It's **speed and focus**. No notification badges. No sidebar panels fighting for attention. No extension marketplace pop-ups. Just text, commands, and output.
 
+## Upgrade Your Terminal
+
+If you're going back to the terminal, your terminal emulator matters more than you think.
+
+The default terminal apps on macOS and most Linux distros were fine when you opened one window to run a quick command. That's not how terminal-based development works. When you're running Claude Code on one project, editing another, monitoring a dev server for a third, and reviewing logs for a fourth, your terminal emulator becomes your window manager. Each window or tab is a different context, and managing them well is the difference between flow and chaos.
+
+Modern terminal emulators are worth the switch:
+
+- **[Ghostty](https://ghostty.org/)**: Built by Mitchell Hashimoto (of Terraform and Vagrant fame). Native on macOS and Linux, GPU-accelerated, fast, and thoughtfully designed. Splits, tabs, and a configuration file that stays out of your way.
+- **[Kitty](https://sw.kovidgoyal.net/kitty/)**: GPU-accelerated, extensible with kittens (plugins), and supports image rendering in the terminal. Fast and feature-rich.
+- **[iTerm2](https://iterm2.com/)**: The long-standing macOS power-user terminal. Splits, profiles, search, triggers, and deep macOS integration. Not GPU-accelerated like the newer entries, but mature, stable, and packed with features. If you're already on macOS and don't want to change habits, iTerm2 with a good profile setup is a solid choice.
+
+The common thread: GPU acceleration, proper font rendering, fast input handling, and native split/tab support. These aren't cosmetic upgrades. When you're managing four terminal panes at once, input lag and rendering jank break your flow in ways that an IDE never would because the IDE handled all of that for you.
+
+Pick one. Configure your splits. Learn the keybindings. Your terminal windows are your new IDE panels, and managing them well is not optional.
+
 ## Claude Code: An AI Agent in the Terminal
 
 This brings us to Claude Code, and why it matters for this discussion.
