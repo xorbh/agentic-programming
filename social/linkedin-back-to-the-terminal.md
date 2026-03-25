@@ -1,11 +1,9 @@
-The mouse was built to make computers accessible to humans who couldn't type commands. The GUI, the IDE, the visual editor, each one added a layer between the developer and the system. For decades, that tradeoff was worth it.
+We spent forty years building abstractions to make computers easier for humans. The mouse, the GUI, the IDE, each layer made it so you didn't need to memorize commands or understand the system underneath. That tradeoff was worth it for a long time, and then AI agents showed up and didn't need any of it.
 
-AI agents don't need any of those layers. They don't have eyes to scan a GUI. They don't have hands to click a mouse. They interact with the system through text: reading files, writing files, executing commands. Every visual abstraction between the agent and the filesystem is overhead, not help.
+I've been thinking a lot about which abstractions still earn their keep and which ones are just in the way now. The visual code editor is one that's starting to feel like overhead. We layered it on top of a simpler primitive to help humans navigate code, and now our most capable tools work better when that layer is removed.
 
-This is part of a series I've been writing about stripping away clunky abstractions that made sense for a different era but are now just in the way. Last time it was PowerPoint and Word. This time it's the IDE itself.
+What's refreshing about Claude Code is that Anthropic made this choice deliberately. They didn't build another IDE plugin or a visual chat panel. They built a terminal application that uses slash commands for control, the same interface pattern IRC introduced in 1988. Text in, text out, direct access to the filesystem. It turns out that the interface we thought we'd outgrown is the one best suited for AI agents that read files, write code, and run commands without ever needing to point and click.
 
-What's refreshing about Claude Code is that Anthropic didn't build another IDE plugin or visual chat panel. They built a terminal application. Text in, text out. Slash commands for control. The same interface pattern that IRC introduced in 1988. They looked at the options and chose directness over polish, and it turns out that's exactly what an AI coding agent needs.
-
-If you're spending more time in the terminal now, upgrade the terminal itself. Ghostty, Kitty, iTerm2. Your terminal windows are your new IDE panels, and managing them well is not optional.
+Tools like Claude Co-work are becoming popular and they're impressive, but the browser-based interfaces can only take you so far. Power users will always be better served by understanding how computers and filesystems actually work. We've had incredible tools sitting in our terminals for decades. It's worth learning your main tool a little better. Don't be scared of the terminal. Upgrade to something modern like Ghostty, Kitty, or iTerm2, learn the keybindings, and you'll find it's a better environment for working with AI than any GUI wrapper.
 
 Full post on the history from vi to IRC to Claude Code, and why the future of coding looks like 1976: https://xorbh.github.io/agentic-programming/2026/03/18/back-to-the-terminal/
